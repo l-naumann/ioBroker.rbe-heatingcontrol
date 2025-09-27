@@ -52,7 +52,7 @@
     "cmiName": "",
     "email": "",
     "password": "",
-    "pollInterval": 30000
+    "pollInterval": 60000
   },
   "objects": [],
   "instanceObjects": [

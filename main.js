@@ -18,27 +18,39 @@ class CmiAdapter extends utils.Adapter {
         this.pollTimeout = null;
         this.sessionId = null;
         this.cmiHost = null;
+        this.loginRetries = 0;
+        this.isPolling = false;
     }
 
     async onReady() {
         this.log.info('CMI adapter starting...');
         
-        // Validate configuration
-        if (!this.config.cmiName || !this.config.email || !this.config.password) {
-            this.log.error('CMI name, email and password are required in adapter configuration');
-            return;
+        try {
+            // Validate configuration
+            if (!this.config.cmiName || !this.config.email || !this.config.password) {
+                this.log.error('CMI name, email and password are required in adapter configuration');
+                return;
+            }
+            
+            this.cmiHost = `${this.config.cmiName}.cmi.ta.co.at`;
+            
+            // Set connection state to false initially
+            await this.setStateAsync('info.connection', false, true);
+            
+            // Subscribe to state changes for writable states
+            this.subscribeStates('*');
+            
+            // Delay startup to prevent resource conflicts during installation
+            this.log.info('Delaying startup by 10 seconds to prevent resource conflicts...');
+            setTimeout(() => {
+                this.login().catch(err => {
+                    this.log.error(`Startup error: ${err.message}`);
+                });
+            }, 10000);
+            
+        } catch (error) {
+            this.log.error(`Error in onReady: ${error.message}`);
         }
-        
-        this.cmiHost = `${this.config.cmiName}.cmi.ta.co.at`;
-        
-        // Set connection state to false initially
-        await this.setStateAsync('info.connection', false, true);
-        
-        // Subscribe to state changes for writable states
-        this.subscribeStates('*');
-        
-        // Start login and polling
-        await this.login();
     }
 
     async login() {
@@ -50,15 +62,16 @@ class CmiAdapter extends utils.Adapter {
                 url: 'https://cmi.ta.co.at/portal/checkLogin.inc.php?mode=ta',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                     'Origin': 'https://cmi.ta.co.at',
                     'Referer': 'https://cmi.ta.co.at/portal/ta/loginformular/'
                 },
                 data: `username=${encodeURIComponent(this.config.email)}&passwort=${encodeURIComponent(this.config.password)}&remember=on`,
                 jar: this.cookieJar,
                 withCredentials: true,
-                maxRedirects: 5
+                maxRedirects: 5,
+                timeout: 15000
             });
 
             // Extract PHPSESSID from cookies
@@ -67,37 +80,65 @@ class CmiAdapter extends utils.Adapter {
             
             if (sessionCookie) {
                 this.sessionId = sessionCookie.value;
+                this.loginRetries = 0; // Reset retry counter on success
                 this.log.info('Successfully logged in to CMI portal');
                 await this.setStateAsync('info.connection', true, true);
                 
-                // Start polling
-                this.startPolling();
+                // Start polling with delay
+                setTimeout(() => {
+                    this.startPolling();
+                }, 5000);
             } else {
-                this.log.error('Login failed - no session cookie received');
-                await this.setStateAsync('info.connection', false, true);
-                // Retry login in 5 minutes
-                this.pollTimeout = setTimeout(() => this.login(), 300000);
+                throw new Error('No session cookie received');
             }
             
         } catch (error) {
             this.log.error(`Login error: ${error.message}`);
             await this.setStateAsync('info.connection', false, true);
-            // Retry login in 5 minutes
-            this.pollTimeout = setTimeout(() => this.login(), 300000);
+            
+            // Exponential backoff for retries
+            const maxRetries = 5;
+            if (this.loginRetries < maxRetries) {
+                const retryDelay = Math.min(300000, Math.pow(2, this.loginRetries) * 30000);
+                this.loginRetries++;
+                
+                this.log.info(`Retrying login in ${retryDelay/1000} seconds (attempt ${this.loginRetries}/${maxRetries})`);
+                this.pollTimeout = setTimeout(() => {
+                    this.login().catch(err => {
+                        this.log.error(`Retry login error: ${err.message}`);
+                    });
+                }, retryDelay);
+            } else {
+                this.log.error('Max login retries reached. Adapter will stop.');
+            }
         }
     }
 
     startPolling() {
-        this.log.debug('Starting polling...');
+        if (this.isPolling) {
+            this.log.debug('Polling already active');
+            return;
+        }
+        
+        this.log.debug('Starting data polling...');
         this.pollData();
     }
 
     async pollData() {
-        if (!this.sessionId) {
-            this.log.warn('No session ID available, attempting to login again');
-            await this.login();
+        if (this.isPolling) {
+            this.log.debug('Polling already in progress, skipping...');
             return;
         }
+        
+        if (!this.sessionId) {
+            this.log.warn('No session ID available, attempting to login again');
+            this.login().catch(err => {
+                this.log.error(`Login error in pollData: ${err.message}`);
+            });
+            return;
+        }
+        
+        this.isPolling = true;
 
         try {
             const timestamp = Date.now();
@@ -110,12 +151,12 @@ class CmiAdapter extends utils.Adapter {
                 url: url,
                 headers: {
                     'X-Requested-With': 'XMLHttpRequest',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Accept': 'text/html, */*; q=0.01',
                     'Referer': `https://${this.cmiHost}/webi/schema.html`,
                     'Cookie': `PHPSESSID=${this.sessionId}`
                 },
-                timeout: 10000
+                timeout: 15000
             });
 
             await this.parseAndUpdateStates(response.data);
@@ -124,97 +165,172 @@ class CmiAdapter extends utils.Adapter {
             this.log.error(`Polling error: ${error.message}`);
             
             // If unauthorized, try to login again
-            if (error.response && error.response.status === 401) {
+            if (error.response && (error.response.status === 401 || error.response.status === 403)) {
                 this.log.warn('Session expired, attempting to login again');
                 this.sessionId = null;
                 await this.setStateAsync('info.connection', false, true);
-                await this.login();
+                setTimeout(() => {
+                    this.login().catch(err => {
+                        this.log.error(`Re-login error: ${err.message}`);
+                    });
+                }, 2000);
+                this.isPolling = false;
                 return;
             }
         }
 
-        // Schedule next poll
-        const pollInterval = this.config.pollInterval || 30000;
-        this.pollTimeout = setTimeout(() => this.pollData(), pollInterval);
+        // Schedule next poll with minimum interval
+        this.isPolling = false;
+        const pollInterval = Math.max(60000, this.config.pollInterval || 60000); // Minimum 1 minute
+        this.pollTimeout = setTimeout(() => {
+            this.pollData().catch(err => {
+                this.log.error(`Scheduled polling error: ${err.message}`);
+                this.isPolling = false;
+            });
+        }, pollInterval);
     }
 
     async parseAndUpdateStates(htmlData) {
-        const $ = cheerio.load(htmlData);
-        
-        $('div[id^="pos"]').each(async (index, element) => {
-            const $element = $(element);
-            const id = $element.attr('id');
+        if (!htmlData || htmlData.length === 0) {
+            this.log.warn('Received empty HTML data');
+            return;
+        }
+
+        try {
+            const $ = cheerio.load(htmlData);
+            const operations = [];
             
-            // Extract readable values from elements with text content
-            const textContent = $element.text().trim();
-            if (textContent && !textContent.includes('onClick') && textContent.length > 0) {
-                // Clean up text content (remove special characters, normalize)
-                const cleanText = textContent.replace(/[°C]/g, '').trim();
-                
-                // Check if it's a numeric value
-                const numericValue = parseFloat(cleanText);
-                if (!isNaN(numericValue)) {
-                    await this.createAndSetState(`values.${id}`, {
-                        type: 'number',
-                        role: 'value',
-                        name: `Value ${id}`,
-                        read: true,
-                        write: false,
-                        unit: textContent.includes('°C') ? '°C' : ''
-                    }, numericValue);
-                } else if (textContent.length < 50) { // Avoid very long texts
-                    await this.createAndSetState(`values.${id}`, {
-                        type: 'string',
-                        role: 'text',
-                        name: `Text ${id}`,
-                        read: true,
-                        write: false
-                    }, textContent);
-                }
-            }
+            // Find all position elements but limit to reasonable amount
+            const elements = $('div[id^="pos"]').get();
+            const maxElements = Math.min(elements.length, 50); // Limit processing
             
-            // Extract controllable elements (pm_element)
-            if ($element.hasClass('pm_element')) {
-                const value = $element.attr('pme_value');
-                const min = $element.attr('pme_min');
-                const max = $element.attr('pme_max');
-                const changeAddr = $element.attr('pme_changeadr');
-                
-                if (value && changeAddr) {
-                    await this.createAndSetState(`controls.${id}`, {
-                        type: 'number',
-                        role: 'level',
-                        name: `Control ${id}`,
-                        read: true,
-                        write: true,
-                        min: min ? parseFloat(min) : undefined,
-                        max: max ? parseFloat(max) : undefined,
-                        unit: '°C'
-                    }, parseFloat(value));
+            this.log.debug(`Processing ${maxElements} of ${elements.length} elements`);
+            
+            for (let i = 0; i < maxElements; i++) {
+                try {
+                    const element = elements[i];
+                    const $element = $(element);
+                    const id = $element.attr('id');
                     
-                    // Store change address for later use
-                    await this.setStateAsync(`controls.${id}_changeAddr`, changeAddr, true);
+                    if (!id) continue;
+                    
+                    // Process text content values
+                    const textContent = $element.text().trim();
+                    if (textContent && textContent.length > 0 && textContent.length < 100 && !textContent.includes('onClick')) {
+                        const cleanText = textContent.replace(/[°C]/g, '').trim();
+                        const numericValue = parseFloat(cleanText);
+                        
+                        if (!isNaN(numericValue) && numericValue !== 0) {
+                            operations.push({
+                                path: `values.${id}`,
+                                config: {
+                                    type: 'number',
+                                    role: 'value',
+                                    name: `Value ${id}`,
+                                    read: true,
+                                    write: false,
+                                    unit: textContent.includes('°C') ? '°C' : ''
+                                },
+                                value: numericValue
+                            });
+                        } else if (textContent.length < 30 && textContent.length > 1) {
+                            operations.push({
+                                path: `values.${id}`,
+                                config: {
+                                    type: 'string',
+                                    role: 'text',
+                                    name: `Text ${id}`,
+                                    read: true,
+                                    write: false
+                                },
+                                value: textContent
+                            });
+                        }
+                    }
+                    
+                    // Process controllable elements
+                    if ($element.hasClass('pm_element')) {
+                        const value = $element.attr('pme_value');
+                        const min = $element.attr('pme_min');
+                        const max = $element.attr('pme_max');
+                        const changeAddr = $element.attr('pme_changeadr');
+                        
+                        if (value && changeAddr && !isNaN(parseFloat(value))) {
+                            operations.push({
+                                path: `controls.${id}`,
+                                config: {
+                                    type: 'number',
+                                    role: 'level',
+                                    name: `Control ${id}`,
+                                    read: true,
+                                    write: true,
+                                    min: min ? parseFloat(min) : undefined,
+                                    max: max ? parseFloat(max) : undefined,
+                                    unit: '°C'
+                                },
+                                value: parseFloat(value)
+                            });
+                            
+                            // Store change address separately
+                            operations.push({
+                                path: `controls.${id}_changeAddr`,
+                                value: changeAddr,
+                                simple: true
+                            });
+                        }
+                    }
+                    
+                    // Process status elements
+                    const visibleClass = $element.attr('class');
+                    if (visibleClass && visibleClass.includes('visible')) {
+                        const visibleMatch = visibleClass.match(/visible(\d+)/);
+                        if (visibleMatch) {
+                            operations.push({
+                                path: `status.${id}`,
+                                config: {
+                                    type: 'number',
+                                    role: 'indicator',
+                                    name: `Status ${id}`,
+                                    read: true,
+                                    write: false
+                                },
+                                value: parseInt(visibleMatch[1])
+                            });
+                        }
+                    }
+                } catch (elementError) {
+                    this.log.debug(`Error processing element ${i}: ${elementError.message}`);
                 }
             }
             
-            // Extract visible state elements
-            const visibleClass = $element.attr('class');
-            if (visibleClass && visibleClass.includes('visible')) {
-                const visibleMatch = visibleClass.match(/visible(\d+)/);
-                if (visibleMatch) {
-                    const visibleValue = parseInt(visibleMatch[1]);
-                    await this.createAndSetState(`status.${id}`, {
-                        type: 'number',
-                        role: 'indicator',
-                        name: `Status ${id}`,
-                        read: true,
-                        write: false
-                    }, visibleValue);
+            // Process operations in small batches
+            const batchSize = 3;
+            let processed = 0;
+            
+            for (let i = 0; i < operations.length; i += batchSize) {
+                const batch = operations.slice(i, i + batchSize);
+                
+                const results = await Promise.allSettled(batch.map(async (op) => {
+                    if (op.simple) {
+                        await this.setStateAsync(op.path, op.value, true);
+                    } else {
+                        await this.createAndSetState(op.path, op.config, op.value);
+                    }
+                }));
+                
+                processed += results.filter(r => r.status === 'fulfilled').length;
+                
+                // Short delay between batches
+                if (i + batchSize < operations.length) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
                 }
             }
-        });
-        
-        this.log.debug('Data parsing and state updates completed');
+            
+            this.log.debug(`Processed ${processed}/${operations.length} state operations`);
+            
+        } catch (error) {
+            this.log.error(`Error parsing HTML: ${error.message}`);
+        }
     }
 
     async createAndSetState(statePath, common, value) {
@@ -227,12 +343,12 @@ class CmiAdapter extends utils.Adapter {
             
             await this.setStateAsync(statePath, value, true);
         } catch (error) {
-            this.log.error(`Error creating/setting state ${statePath}: ${error.message}`);
+            this.log.warn(`Error with state ${statePath}: ${error.message}`);
         }
     }
 
     async onStateChange(id, state) {
-        if (state && !state.ack) {
+        if (state && !state.ack && state.val !== null && state.val !== undefined) {
             this.log.debug(`State changed: ${id} = ${state.val}`);
             
             // Handle control state changes
@@ -240,12 +356,9 @@ class CmiAdapter extends utils.Adapter {
                 const controlId = id.split('.').pop();
                 
                 try {
-                    // Get the change address for this control
                     const changeAddrState = await this.getStateAsync(`controls.${controlId}_changeAddr`);
                     if (changeAddrState && changeAddrState.val) {
                         await this.sendControlValue(changeAddrState.val, state.val);
-                        
-                        // Acknowledge the state change
                         await this.setStateAsync(id, state.val, true);
                     } else {
                         this.log.warn(`No change address found for control ${controlId}`);
@@ -274,7 +387,7 @@ class CmiAdapter extends utils.Adapter {
                 url: url,
                 headers: {
                     'X-Requested-With': 'XMLHttpRequest',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Accept': '*/*',
                     'Referer': `https://${this.cmiHost}/webi/schema.html`,
                     'Cookie': `PHPSESSID=${this.sessionId}`
@@ -282,12 +395,11 @@ class CmiAdapter extends utils.Adapter {
                 timeout: 10000
             });
             
-            this.log.info(`Control value sent successfully: ${response.data}`);
+            this.log.info(`Control value sent successfully`);
             
         } catch (error) {
             this.log.error(`Error sending control value: ${error.message}`);
             
-            // If unauthorized, mark session as invalid
             if (error.response && error.response.status === 401) {
                 this.sessionId = null;
                 await this.setStateAsync('info.connection', false, true);
@@ -302,7 +414,8 @@ class CmiAdapter extends utils.Adapter {
                 this.pollTimeout = null;
             }
             
-            this.log.info('CMI adapter stopped');
+            this.isPolling = false;
+            this.log.info('CMI adapter stopped cleanly');
             callback();
         } catch (e) {
             callback();
@@ -311,9 +424,7 @@ class CmiAdapter extends utils.Adapter {
 }
 
 if (require.main !== module) {
-    // Export the constructor in compact mode
     module.exports = (options) => new CmiAdapter(options);
 } else {
-    // otherwise start the instance directly
     new CmiAdapter();
 }
