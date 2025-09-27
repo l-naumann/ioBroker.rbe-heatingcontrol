@@ -7,7 +7,7 @@ class CmiAdapter extends utils.Adapter {
     constructor(options) {
         super({
             ...options,
-            name: 'cmi',
+            name: 'rbe-heatingcontrol',
         });
         
         this.on('ready', this.onReady.bind(this));

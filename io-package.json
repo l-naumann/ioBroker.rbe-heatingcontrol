@@ -1,6 +1,6 @@
 {
   "common": {
-    "name": "cmi",
+    "name": "rbe-heatingcontrol",
     "version": "1.0.0",
     "news": {
       "1.0.0": {
@@ -29,10 +29,10 @@
     "license": "MIT",
     "platform": "Javascript/Node.js",
     "main": "main.js",
-    "icon": "cmi.png",
+    "icon": "rbe-heatingcontrol.png",
     "enabled": true,
-    "extIcon": "https://raw.githubusercontent.com/yourgithubuser/ioBroker.cmi/main/admin/cmi.png",
-    "readme": "https://github.com/yourgithubuser/ioBroker.cmi/blob/main/README.md",
+    "extIcon": "https://raw.githubusercontent.com/l-naumann/ioBroker.rbe-heatingcontrol/main/admin/rbe-heatingcontrol.png",
+    "readme": "https://github.com/l-naumann/ioBroker.rbe-heatingcontrol/blob/main/README.md",
     "loglevel": "info",
     "mode": "daemon",
     "type": "climate-control",
@@ -52,7 +52,7 @@
     "cmiName": "",
     "email": "",
     "password": "",
-    "pollInterval": 30000
+    "pollInterval": 60000
   },
   "objects": [],
   "instanceObjects": [

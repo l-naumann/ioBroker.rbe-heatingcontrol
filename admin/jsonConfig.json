@@ -1,29 +1,35 @@
 {
-  "type": "panel",
+  "type": "tabs",
   "items": {
-    "cmiName": {
-      "type": "text",
-      "label": "CMI Name",
-      "help": "Name of your CMI device (e.g., cmi088364)",
-      "placeholder": "cmi088364"
-    },
-    "email": {
-      "type": "text",
-      "label": "Email",
-      "help": "Your login email for the CMI portal"
-    },
-    "password": {
-      "type": "password",
-      "label": "Password",
-      "help": "Your login password for the CMI portal"
-    },
-    "pollInterval": {
-      "type": "number",
-      "label": "Poll Interval (ms)",
-      "help": "How often to poll for new data in milliseconds",
-      "min": 10000,
-      "max": 300000,
-      "default": 30000
+    "general": {
+      "type": "panel",
+      "label": "General Settings",
+      "items": {
+        "cmiName": {
+          "type": "text",
+          "label": "CMI Name",
+          "help": "Name of your CMI device (e.g., cmi088364)",
+          "placeholder": "cmi088364"
+        },
+        "email": {
+          "type": "text",
+          "label": "Email",
+          "help": "Your login email for the CMI portal"
+        },
+        "password": {
+          "type": "password",
+          "label": "Password",
+          "help": "Your login password for the CMI portal"
+        },
+        "pollInterval": {
+          "type": "number",
+          "label": "Poll Interval (ms)",
+          "help": "How often to poll for new data in milliseconds",
+          "min": 10000,
+          "max": 300000,
+          "default": 60000
+        }
+      }
     }
   }
 }

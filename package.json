@@ -1,7 +1,7 @@
 {
-  "name": "iobroker.cmi",
+  "name": "iobroker.rbe-heatingcontrol",
   "version": "1.0.0",
-  "description": "ioBroker adapter for CMI heating controller portal automation",
+  "description": "ioBroker adapter for RBE heating controller portal automation",
   "author": {
     "name": "Lukas Naumann",
     "email": "mail@lukas-naumann.de"
@@ -18,7 +18,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourgithubuser/ioBroker.cmi"
+    "url": "https://github.com/l-naumann/ioBroker.rbe-heatingcontrol"
   },
   "engines": {
     "node": ">=12.0.0",
