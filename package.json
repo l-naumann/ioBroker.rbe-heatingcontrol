@@ -1,0 +1,60 @@
+{
+  "name": "iobroker.cmi",
+  "version": "1.0.0",
+  "description": "ioBroker adapter for CMI heating controller portal automation",
+  "author": {
+    "name": "Lukas Naumann",
+    "email": "mail@lukas-naumann.de"
+  },
+  "contributors": [],
+  "homepage": "https://github.com/yourgithubuser/ioBroker.cmi",
+  "license": "MIT",
+  "keywords": [
+    "ioBroker",
+    "cmi",
+    "heating",
+    "controller",
+    "automation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourgithubuser/ioBroker.cmi"
+  },
+  "engines": {
+    "node": ">=12.0.0",
+    "npm": ">=6.0.0"
+  },
+  "dependencies": {
+    "@iobroker/adapter-core": "^2.6.0",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "tough-cookie": "^4.1.3"
+  },
+  "devDependencies": {
+    "@iobroker/testing": "^4.1.0",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0",
+    "eslint": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0"
+  },
+  "main": "main.js",
+  "files": [
+    "admin{,/**/*}",
+    "lib{,/**/*}",
+    "widgets{,/**/*}",
+    "www{,/**/*}",
+    "io-package.json",
+    "main.js"
+  ],
+  "scripts": {
+    "test": "npm run test:js && npm run test:package",
+    "test:js": "mocha test/*.js",
+    "test:package": "mocha test/package --exit",
+    "test:integration": "mocha test/integration --exit",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "lint": "eslint src/",
+    "start": "node main.js"
+  }
+}

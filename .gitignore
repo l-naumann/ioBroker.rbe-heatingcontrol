@@ -1,0 +1,9 @@
+node_modules/
+build/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+*.tgz
+temp/
+.eslintcache

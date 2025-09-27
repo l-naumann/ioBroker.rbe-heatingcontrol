@@ -1,0 +1,81 @@
+{
+  "common": {
+    "name": "cmi",
+    "version": "1.0.0",
+    "news": {
+      "1.0.0": {
+        "en": "Initial release",
+        "de": "Erste Version"
+      }
+    },
+    "title": "CMI Heating Controller",
+    "titleLang": {
+      "en": "CMI Heating Controller",
+      "de": "CMI Heizungssteuerung"
+    },
+    "desc": {
+      "en": "Adapter for CMI heating controller portal automation",
+      "de": "Adapter für CMI Heizungssteuerung Portal-Automatisierung"
+    },
+    "authors": [
+      "Lukas <lukas@example.com>"
+    ],
+    "keywords": [
+      "cmi",
+      "heating",
+      "controller",
+      "automation"
+    ],
+    "license": "MIT",
+    "platform": "Javascript/Node.js",
+    "main": "main.js",
+    "icon": "cmi.png",
+    "enabled": true,
+    "extIcon": "https://raw.githubusercontent.com/yourgithubuser/ioBroker.cmi/main/admin/cmi.png",
+    "readme": "https://github.com/yourgithubuser/ioBroker.cmi/blob/main/README.md",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "climate-control",
+    "compact": true,
+    "connectionType": "cloud",
+    "dataSource": "poll",
+    "adminUI": {
+      "config": "json"
+    },
+    "dependencies": [
+      {
+        "js-controller": ">=3.3.22"
+      }
+    ]
+  },
+  "native": {
+    "cmiName": "",
+    "email": "",
+    "password": "",
+    "pollInterval": 30000
+  },
+  "objects": [],
+  "instanceObjects": [
+    {
+      "_id": "info",
+      "type": "channel",
+      "common": {
+        "name": "Information"
+      },
+      "native": {}
+    },
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "role": "indicator.connected",
+        "name": "Device or service connected",
+        "type": "boolean",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    }
+  ]
+}
