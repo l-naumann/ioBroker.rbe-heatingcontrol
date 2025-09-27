@@ -1,23 +1,23 @@
 {
   "type": "panel",
   "items": {
-    "_cmiName": {
+    "cmiName": {
       "type": "text",
       "label": "CMI Name",
       "help": "Name of your CMI device (e.g., cmi088364)",
       "placeholder": "cmi088364"
     },
-    "_email": {
+    "email": {
       "type": "text",
       "label": "Email",
       "help": "Your login email for the CMI portal"
     },
-    "_password": {
+    "password": {
       "type": "password",
       "label": "Password",
       "help": "Your login password for the CMI portal"
     },
-    "_pollInterval": {
+    "pollInterval": {
       "type": "number",
       "label": "Poll Interval (ms)",
       "help": "How often to poll for new data in milliseconds",
