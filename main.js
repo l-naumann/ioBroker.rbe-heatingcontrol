@@ -57,6 +57,9 @@ class CmiAdapter extends utils.Adapter {
         try {
             this.log.info('Attempting to login to CMI portal...');
             
+            // First, let's intercept redirects to catch cookies from the 302 response
+            let sessionCookie = null;
+            
             const response = await axios({
                 method: 'POST',
                 url: 'https://cmi.ta.co.at/portal/checkLogin.inc.php?mode=ta',
@@ -70,19 +73,68 @@ class CmiAdapter extends utils.Adapter {
                 data: `username=${encodeURIComponent(this.config.email)}&passwort=${encodeURIComponent(this.config.password)}&remember=on`,
                 jar: this.cookieJar,
                 withCredentials: true,
-                maxRedirects: 5,
-                timeout: 15000
+                maxRedirects: 0, // Don't follow redirects automatically
+                timeout: 15000,
+                validateStatus: function (status) {
+                    return status >= 200 && status < 400; // Accept redirects as success
+                }
             });
 
-            // Extract PHPSESSID from cookies
-            const cookies = this.cookieJar.getCookiesSync('https://cmi.ta.co.at');
-            const sessionCookie = cookies.find(cookie => cookie.key === 'PHPSESSID');
+            this.log.debug(`Login response status: ${response.status}`);
+            
+            // Check for cookies in the response headers (from 302 redirect)
+            if (response.headers['set-cookie']) {
+                this.log.debug('Found set-cookie headers in response');
+                
+                for (const cookieHeader of response.headers['set-cookie']) {
+                    this.log.debug(`Cookie header: ${cookieHeader}`);
+                    if (cookieHeader.includes('PHPSESSID')) {
+                        const match = cookieHeader.match(/PHPSESSID=([^;]+)/);
+                        if (match) {
+                            sessionCookie = match[1];
+                            this.log.debug(`Extracted session cookie: ${sessionCookie}`);
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Also check the cookie jar as fallback
+            if (!sessionCookie) {
+                this.log.debug('No cookie in headers, checking cookie jar');
+                const cookies = this.cookieJar.getCookiesSync('https://cmi.ta.co.at');
+                this.log.debug(`Cookie jar contains ${cookies.length} cookies`);
+                
+                const jarCookie = cookies.find(cookie => cookie.key === 'PHPSESSID');
+                if (jarCookie) {
+                    sessionCookie = jarCookie.value;
+                    this.log.debug(`Found session cookie in jar: ${sessionCookie}`);
+                }
+            }
             
             if (sessionCookie) {
-                this.sessionId = sessionCookie.value;
+                this.sessionId = sessionCookie;
                 this.loginRetries = 0; // Reset retry counter on success
-                this.log.info('Successfully logged in to CMI portal');
+                this.log.info(`Successfully logged in to CMI portal (Session: ${sessionCookie.substring(0, 8)}...)`);
                 await this.setStateAsync('info.connection', true, true);
+                
+                // If we got a redirect (302), follow it manually to complete the login
+                if (response.status === 302 && response.headers.location) {
+                    this.log.debug(`Following redirect to: ${response.headers.location}`);
+                    try {
+                        await axios({
+                            method: 'GET',
+                            url: response.headers.location,
+                            headers: {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                                'Cookie': `PHPSESSID=${this.sessionId}`
+                            },
+                            timeout: 10000
+                        });
+                    } catch (redirectError) {
+                        this.log.warn(`Error following redirect: ${redirectError.message}`);
+                    }
+                }
                 
                 // Start polling with delay
                 setTimeout(() => {
