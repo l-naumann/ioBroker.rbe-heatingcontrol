@@ -392,8 +392,15 @@ class CmiAdapter extends utils.Adapter {
                     const $labelElement = $(labelElement);
                     const $valueElement = $(valueElement);
                     
-                    const labelText = $labelElement.text().trim();
-                    const valueText = $valueElement.text().trim();
+                    let labelText = $labelElement.text().trim();
+                    let valueText = $valueElement.text().trim();
+
+                    // Check if label and value are swapped
+                    if (labelText.includes('EIN') || labelText.includes('AUS') || labelText.includes('°C') || labelText.includes('%') || labelText.includes('ppm')) {
+                        const temp = labelText;
+                        labelText = valueText;
+                        valueText = temp;
+                    }
                     
                     // Skip empty labels or elements with onClick (navigation elements)
                     if (!labelText || labelText.length === 0 || 
