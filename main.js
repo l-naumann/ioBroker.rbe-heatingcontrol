@@ -181,6 +181,13 @@ class RbeHeatingControl extends utils.Adapter {
 
             await this.writeState(`controls.${id}`, common, value);
         }
+
+        // Night setback: pos17 shows image 1_pos17_1.png in setback mode, 1_pos17_0.png in day mode
+        const visibleImage = $('#pos17 img').not('.hide').attr('src');
+        if (visibleImage) {
+            const common = { name: 'Nachtabsenkung', type: 'boolean', role: 'indicator', read: true, write: false };
+            await this.writeState('sensors.nachtabsenkung', common, /_1\.png$/.test(visibleImage));
+        }
     }
 
     async updateSensors(html) {
