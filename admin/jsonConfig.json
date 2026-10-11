@@ -25,7 +25,7 @@
           "type": "number",
           "label": "Poll Interval (ms)",
           "help": "How often to poll for new data in milliseconds",
-          "min": 10000,
+          "min": 60000,
           "max": 300000,
           "default": 60000
         }

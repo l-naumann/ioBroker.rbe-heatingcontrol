@@ -1,6 +1,6 @@
-# ioBroker.cmi
+# ioBroker.rbe-heatingcontrol
 
-![Logo](admin/cmi.png)
+![Logo](admin/rbe-heatingcontrol.png)
 
 Adapter for CMI heating controller portal automation
 
@@ -13,7 +13,7 @@ This adapter connects to the cmi.ta.co.at portal to automatically read heating c
 - **CMI Name**: The name of your CMI device (e.g., cmi088364)
 - **Email**: Your login email for the CMI portal  
 - **Password**: Your login password for the CMI portal
-- **Poll Interval**: How often to poll for new data (default: 30 seconds)
+- **Poll Interval**: How often to poll for new data in milliseconds (default and minimum: 60000)
 
 ## Features
 
@@ -28,9 +28,8 @@ This adapter connects to the cmi.ta.co.at portal to automatically read heating c
 The adapter creates several state categories:
 
 - `info.connection` - Connection status to the CMI portal
-- `values.*` - Read-only values from the heating system
-- `controls.*` - Controllable values (like temperature setpoints)  
-- `status.*` - Status indicators and system states
+- `sensors.*` - Read-only values from the schematic pages `12.cgi` and `13.cgi` (EIN/AUS as `true`/`false`, numbers with unit)
+- `controls.*` - Controllable values (like temperature setpoints) from `1.cgi`
 
 ## Changelog
 
