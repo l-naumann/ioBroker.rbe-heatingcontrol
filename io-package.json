@@ -52,7 +52,8 @@
     "cmiName": "",
     "email": "",
     "password": "",
-    "pollInterval": 60000
+    "pollInterval": 60000,
+    "pollSetback": true
   },
   "objects": [],
   "instanceObjects": [

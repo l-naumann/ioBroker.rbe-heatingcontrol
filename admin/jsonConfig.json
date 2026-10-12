@@ -28,6 +28,18 @@
           "min": 60000,
           "max": 300000,
           "default": 60000
+        },
+        "pollSetback": {
+          "type": "checkbox",
+          "label": {
+            "en": "Poll night setback",
+            "de": "Nachtabsenkung abfragen"
+          },
+          "help": {
+            "en": "Reads sensors.nachtabsenkung from 1.cgi. Causes an additional request to the CMI per poll interval.",
+            "de": "Liest sensors.nachtabsenkung aus 1.cgi. Verursacht pro Abfrageintervall eine zusätzliche Anfrage an das CMI."
+          },
+          "default": true
         }
       }
     }

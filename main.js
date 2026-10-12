@@ -11,12 +11,10 @@ const MIN_POLL_INTERVAL = 60000;
 const LOGIN_RETRY_BASE = 30000;
 const LOGIN_RETRY_MAX = 300000;
 
-// Schematic pages of the CMI web interface:
-// 'controls' = setpoints with change address, 'sensors' = label/value pairs
-const PAGES = [
-    { file: 1, type: 'controls' },
-    { file: 12, type: 'sensors' },
-    { file: 13, type: 'sensors' },
+// Setpoints on schematic page 4.cgi, identified by their CMI change address
+const CONTROLS = [
+    { id: 'traum_soll', name: 'Raum soll', changeAddr: '0200184414D101' },
+    { id: 'traum_absenk_soll', name: 'Raum reduziert', changeAddr: '02001D4414D101' },
 ];
 
 // Expired sessions show up as redirect to the login page or as 401/403
@@ -33,7 +31,6 @@ class RbeHeatingControl extends utils.Adapter {
         this.sessionId = null;
         this.timer = null; // single timer for login and polling, so there is never more than one loop
         this.loginAttempts = 0;
-        this.changeAddrs = new Map(); // control id -> CMI change address
         this.knownObjects = new Set();
     }
 
@@ -46,10 +43,42 @@ class RbeHeatingControl extends utils.Adapter {
 
         this.baseUrl = `https://${cmiName}.cmi.ta.co.at/webi`;
         this.pollInterval = Math.max(MIN_POLL_INTERVAL, Number(this.config.pollInterval) || 0);
+        const pollSetback = this.config.pollSetback !== false;
 
+        // Schematic pages of the CMI web interface:
+        // 'controls' = setpoints, 'setback' = night setback indicator, 'sensors' = label/value pairs
+        this.pages = [
+            { file: 4, type: 'controls' },
+            ...(pollSetback ? [{ file: 1, type: 'setback' }] : []),
+            { file: 12, type: 'sensors' },
+            { file: 13, type: 'sensors' },
+        ];
+
+        await this.cleanupObjects(pollSetback);
         await this.setStateAsync('info.connection', false, true);
         this.subscribeStates('controls.*');
         await this.login();
+    }
+
+    // Remove controls of older versions (controls.posX, controls.posX_changeAddr) and the disabled setback state
+    async cleanupObjects(pollSetback) {
+        const keep = new Set(CONTROLS.map(control => `${this.namespace}.controls.${control.id}`));
+        const obsolete = id => id.startsWith(`${this.namespace}.controls.`) && !keep.has(id);
+
+        const objects = await this.getAdapterObjectsAsync();
+        for (const id of Object.keys(objects).filter(obsolete)) {
+            this.log.info(`Deleting obsolete object ${id}`);
+            await this.delForeignObjectAsync(id);
+        }
+        // _changeAddr values were written as states without object
+        const states = await this.getStatesAsync('controls.*');
+        for (const id of Object.keys(states).filter(obsolete)) {
+            await this.delForeignStateAsync(id);
+        }
+
+        if (!pollSetback && objects[`${this.namespace}.sensors.nachtabsenkung`]) {
+            await this.delObjectAsync('sensors.nachtabsenkung');
+        }
     }
 
     schedule(fn, delay) {
@@ -116,11 +145,13 @@ class RbeHeatingControl extends utils.Adapter {
     }
 
     async poll() {
-        for (const page of PAGES) {
+        for (const page of this.pages) {
             try {
                 const html = await this.fetchWebi(`schematic_files/${page.file}.cgi`);
                 if (page.type === 'controls') {
                     await this.updateControls(html);
+                } else if (page.type === 'setback') {
+                    await this.updateSetback(html);
                 } else {
                     await this.updateSensors(html);
                 }
@@ -153,40 +184,41 @@ class RbeHeatingControl extends utils.Adapter {
 
     async updateControls(html) {
         const $ = cheerio.load(html);
-        const seen = new Set();
 
-        for (const el of $('div.pm_element[pme_changeadr]').toArray()) {
-            const id = $(el).attr('id');
-            const changeAddr = $(el).attr('pme_changeadr');
-            const value = parseFloat($(el).attr('pme_value'));
-            // The same setpoint can appear several times in the schematic
-            if (!id || isNaN(value) || seen.has(changeAddr)) {
+        for (const control of CONTROLS) {
+            // Each setpoint appears several times (minus/plus buttons), all with the same value
+            const el = $(`div.pm_element[pme_changeadr="${control.changeAddr}"]`).first();
+            const value = parseFloat(el.attr('pme_value'));
+            if (isNaN(value)) {
+                this.log.debug(`Setpoint ${control.id} not found`);
                 continue;
             }
-            seen.add(changeAddr);
-            this.changeAddrs.set(id, changeAddr);
 
             const common = {
-                name: `Control ${id}`,
+                name: control.name,
                 type: 'number',
-                role: 'level',
+                role: 'level.temperature',
                 unit: '°C',
                 read: true,
                 write: true,
             };
-            const min = parseFloat($(el).attr('pme_min'));
-            const max = parseFloat($(el).attr('pme_max'));
+            const min = parseFloat(el.attr('pme_min'));
+            const max = parseFloat(el.attr('pme_max'));
             if (!isNaN(min)) common.min = min;
             if (!isNaN(max)) common.max = max;
 
-            await this.writeState(`controls.${id}`, common, value);
+            await this.writeState(`controls.${control.id}`, common, value);
         }
+    }
 
-        // Night setback: pos17 shows image 1_pos17_1.png in setback mode, 1_pos17_0.png in day mode
-        const visibleImage = $('#pos17 img').not('.hide').attr('src');
-        if (visibleImage) {
+    async updateSetback(html) {
+        // pos17 has class visible0 in setback mode, visible1 in day mode
+        // (the img "hide" classes are not updated by the CMI, only the div class is)
+        const $ = cheerio.load(html);
+        const setback = $('#pos17');
+        if (setback.hasClass('visible0') || setback.hasClass('visible1')) {
             const common = { name: 'Nachtabsenkung', type: 'boolean', role: 'indicator', read: true, write: false };
-            await this.writeState('sensors.nachtabsenkung', common, /_1\.png$/.test(visibleImage));
+            await this.writeState('sensors.nachtabsenkung', common, setback.hasClass('visible0'));
         }
     }
 
@@ -233,9 +265,8 @@ class RbeHeatingControl extends utils.Adapter {
         }
 
         const controlId = id.split('.').pop();
-        const changeAddr = this.changeAddrs.get(controlId);
+        const changeAddr = CONTROLS.find(control => control.id === controlId)?.changeAddr;
         if (!changeAddr) {
-            this.log.warn(`No change address known for ${controlId} (yet)`);
             return;
         }
 
