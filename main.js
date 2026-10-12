@@ -17,6 +17,9 @@ const CONTROLS = [
     { id: 'traum_absenk_soll', name: 'Raum reduziert', changeAddr: '02001D4414D101' },
 ];
 
+// Logging profiles: always cover at least this much more than the refresh interval
+const LOG_OVERLAP = 5 * 60000;
+
 // Expired sessions show up as redirect to the login page or as 401/403
 const SESSION_ERROR_STATUS = [301, 302, 303, 401, 403];
 
@@ -32,6 +35,8 @@ class RbeHeatingControl extends utils.Adapter {
         this.timer = null; // single timer for login and polling, so there is never more than one loop
         this.loginAttempts = 0;
         this.knownObjects = new Set();
+        this.profileTimers = new Map(); // profile folder -> timeout
+        this.lastLogTs = new Map(); // state id -> timestamp of last written log value
     }
 
     async onReady() {
@@ -54,13 +59,34 @@ class RbeHeatingControl extends utils.Adapter {
             { file: 13, type: 'sensors' },
         ];
 
+        this.profiles = this.validProfiles(this.config.loggingProfiles || []);
+
         await this.cleanupObjects(pollSetback);
         await this.setStateAsync('info.connection', false, true);
         this.subscribeStates('controls.*');
         await this.login();
     }
 
-    // Remove controls of older versions (controls.posX, controls.posX_changeAddr) and the disabled setback state
+    validProfiles(profiles) {
+        const result = [];
+        for (const profile of profiles) {
+            const name = (profile.name || '').trim();
+            const creator = (profile.creator || '').trim();
+            const folder = name.replace(this.FORBIDDEN_CHARS, '_').replace(/[.\s]/g, '_');
+            if (!name || !creator) {
+                this.log.warn('Logging profile without name or creator ignored');
+            } else if (result.some(p => p.folder === folder)) {
+                this.log.warn(`Logging profile "${name}" configured twice, ignoring the second one`);
+            } else {
+                const interval = Math.max(1, Number(profile.interval) || 1) * 60000;
+                result.push({ name, creator, folder, interval });
+            }
+        }
+        return result;
+    }
+
+    // Remove controls of older versions (controls.posX, controls.posX_changeAddr), the disabled setback state
+    // and folders of deleted logging profiles
     async cleanupObjects(pollSetback) {
         const keep = new Set(CONTROLS.map(control => `${this.namespace}.controls.${control.id}`));
         const obsolete = id => id.startsWith(`${this.namespace}.controls.`) && !keep.has(id);
@@ -78,6 +104,16 @@ class RbeHeatingControl extends utils.Adapter {
 
         if (!pollSetback && objects[`${this.namespace}.sensors.nachtabsenkung`]) {
             await this.delObjectAsync('sensors.nachtabsenkung');
+        }
+
+        const profileFolders = new Set(this.profiles.map(profile => profile.folder));
+        const deletedProfiles = new Set(Object.keys(objects)
+            .map(id => id.slice(this.namespace.length + 1).split('.'))
+            .filter(parts => parts[0] === 'logging' && parts.length > 1 && !profileFolders.has(parts[1]))
+            .map(parts => parts[1]));
+        for (const folder of deletedProfiles) {
+            this.log.info(`Deleting states of removed logging profile ${folder}`);
+            await this.delObjectAsync(`logging.${folder}`, { recursive: true });
         }
     }
 
@@ -128,6 +164,7 @@ class RbeHeatingControl extends utils.Adapter {
             this.loginAttempts = 0;
             this.log.info('Logged in to CMI portal');
             await this.setStateAsync('info.connection', true, true);
+            this.startLogging();
             await this.poll();
         } catch (err) {
             const delay = Math.min(LOGIN_RETRY_MAX, LOGIN_RETRY_BASE * 2 ** this.loginAttempts++);
@@ -138,6 +175,9 @@ class RbeHeatingControl extends utils.Adapter {
     }
 
     async relogin() {
+        if (!this.sessionId) {
+            return; // login already in progress
+        }
         this.log.warn('Session expired, logging in again');
         this.sessionId = null;
         await this.setStateAsync('info.connection', false, true);
@@ -163,6 +203,94 @@ class RbeHeatingControl extends utils.Adapter {
             }
         }
         this.schedule(() => this.poll(), this.pollInterval);
+    }
+
+    startLogging() {
+        for (const profile of this.profiles) {
+            if (!this.profileTimers.has(profile.folder)) {
+                this.pollProfile(profile);
+            }
+        }
+    }
+
+    async pollProfile(profile) {
+        if (this.sessionId) {
+            try {
+                await this.updateProfile(profile, await this.fetchLogData(profile));
+            } catch (err) {
+                if (isSessionError(err)) {
+                    await this.relogin();
+                } else {
+                    this.log.error(`Error polling logging profile ${profile.name}: ${err.message}`);
+                }
+            }
+        }
+        this.profileTimers.set(profile.folder, setTimeout(() => this.pollProfile(profile), profile.interval));
+    }
+
+    async fetchLogData(profile) {
+        // Cover the refresh interval plus some overlap, but at least the overlap. "to" is the end of the
+        // current day so that clock differences to the CMI can't cut off the newest values.
+        const now = new Date();
+        const from = new Date(now.getTime() - Math.max(LOG_OVERLAP, profile.interval + LOG_OVERLAP));
+        const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+
+        const response = await axios.get(`${PORTAL_URL}/visual/getlogdata.php`, {
+            params: {
+                cmi: this.config.cmiName.toUpperCase(),
+                profil: profile.name,
+                from: formatDateTime(from),
+                to: formatDateTime(to),
+                mode: 'analog',
+                creator: profile.creator,
+                _: now.getTime(),
+            },
+            headers: this.headers({ 'X-Requested-With': 'XMLHttpRequest' }),
+            maxRedirects: 0,
+            timeout: REQUEST_TIMEOUT,
+        });
+        if (response.data?.status !== 'success' || !response.data.data) {
+            throw new Error(`Unexpected response: ${JSON.stringify(response.data).slice(0, 200)}`);
+        }
+        return response.data.data;
+    }
+
+    async updateProfile(profile, data) {
+        const { description = {}, units = {}, val: rows = [] } = data;
+        if (!rows.length) {
+            this.log.debug(`Logging profile ${profile.name}: no values in time range`);
+            return;
+        }
+
+        await this.setObjectNotExistsAsync('logging', { type: 'folder', common: { name: 'Logging' }, native: {} });
+        await this.setObjectNotExistsAsync(`logging.${profile.folder}`, { type: 'channel', common: { name: profile.name }, native: {} });
+
+        const latest = rows.reduce((a, b) => (a.zeit > b.zeit ? a : b));
+        const ts = new Date(latest.zeit.replace(' ', 'T')).getTime();
+        const usedIds = new Set();
+
+        for (const [key, label] of Object.entries(description)) {
+            const value = latest[key];
+            if (typeof value !== 'number') {
+                continue;
+            }
+            // "1: T.Außen" -> "t_aussen", fall back to the short code (a1) if the name is not unique
+            let id = toStateId(label.replace(/^\d+:\s*/, '').replace(/\./g, ' '));
+            if (!id || usedIds.has(id)) {
+                id = key;
+            }
+            usedIds.add(id);
+
+            const stateId = `logging.${profile.folder}.${id}`;
+            if (this.lastLogTs.get(stateId) >= ts) {
+                continue;
+            }
+            this.lastLogTs.set(stateId, ts);
+
+            const unit = units[key]?.unity || '';
+            const common = { name: label, type: 'number', role: roleForUnit(unit), unit, read: true, write: false };
+            await this.writeState(stateId, common, value, ts);
+        }
     }
 
     headers(extra = {}) {
@@ -245,7 +373,7 @@ class RbeHeatingControl extends utils.Adapter {
         }
     }
 
-    async writeState(id, common, val) {
+    async writeState(id, common, val, ts) {
         // Create each object once per run; fix type/role/unit of objects created by older versions
         if (!this.knownObjects.has(id)) {
             const obj = await this.getObjectAsync(id);
@@ -256,7 +384,7 @@ class RbeHeatingControl extends utils.Adapter {
             }
             this.knownObjects.add(id);
         }
-        await this.setStateAsync(id, val, true);
+        await this.setStateAsync(id, ts ? { val, ack: true, ts } : { val, ack: true });
     }
 
     async onStateChange(id, state) {
@@ -284,6 +412,7 @@ class RbeHeatingControl extends utils.Adapter {
 
     onUnload(callback) {
         clearTimeout(this.timer);
+        this.profileTimers.forEach(timer => clearTimeout(timer));
         callback();
     }
 }
@@ -296,6 +425,17 @@ function looksLikeValue(text) {
     return text === 'EIN' || text === 'AUS' || /^-?\d+(\.\d+)?\s*(°C|%|ppm|V)$/.test(text);
 }
 
+function roleForUnit(unit) {
+    return unit === '°C' ? 'value.temperature' : unit === 'V' ? 'value.voltage' : 'value';
+}
+
+// Local time as "2026-10-12 08:58:25", the format the CMI portal expects
+function formatDateTime(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+        + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 function parseValue(text) {
     if (text === 'EIN' || text === 'AUS') {
         return { type: 'boolean', role: 'indicator', val: text === 'EIN' };
@@ -304,8 +444,7 @@ function parseValue(text) {
     const match = /^(-?\d+(?:\.\d+)?)\s*([^\d\s:.]\S*)?$/.exec(text);
     if (match) {
         const unit = match[2] || '';
-        const role = unit === '°C' ? 'value.temperature' : unit === 'V' ? 'value.voltage' : 'value';
-        return { type: 'number', role, unit, val: parseFloat(match[1]) };
+        return { type: 'number', role: roleForUnit(unit), unit, val: parseFloat(match[1]) };
     }
     return { type: 'string', role: 'text', val: text };
 }

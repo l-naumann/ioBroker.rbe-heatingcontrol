@@ -53,7 +53,8 @@
     "email": "",
     "password": "",
     "pollInterval": 60000,
-    "pollSetback": true
+    "pollSetback": true,
+    "loggingProfiles": []
   },
   "objects": [],
   "instanceObjects": [

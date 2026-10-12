@@ -42,6 +42,68 @@
           "default": true
         }
       }
+    },
+    "logging": {
+      "type": "panel",
+      "label": {
+        "en": "Logging profiles",
+        "de": "Logging-Profile"
+      },
+      "items": {
+        "loggingProfiles": {
+          "type": "table",
+          "xs": 12,
+          "sm": 12,
+          "md": 12,
+          "lg": 12,
+          "xl": 12,
+          "label": {
+            "en": "Logging profiles",
+            "de": "Logging-Profile"
+          },
+          "help": {
+            "en": "Each profile is read from the CMI portal in its own refresh interval (one request per profile). Values appear under logging.<profile name>.",
+            "de": "Jedes Profil wird im eigenen Aktualisierungsintervall aus dem CMI-Portal gelesen (eine Anfrage pro Profil). Die Werte erscheinen unter logging.<Profilname>."
+          },
+          "items": [
+            {
+              "type": "text",
+              "attr": "name",
+              "width": "40%",
+              "title": {
+                "en": "Profile name",
+                "de": "Profilname"
+              },
+              "filter": false,
+              "sort": false
+            },
+            {
+              "type": "text",
+              "attr": "creator",
+              "width": "35%",
+              "title": {
+                "en": "Creator",
+                "de": "Creator-Name"
+              },
+              "filter": false,
+              "sort": false
+            },
+            {
+              "type": "number",
+              "attr": "interval",
+              "width": "25%",
+              "title": {
+                "en": "Refresh (min)",
+                "de": "Intervall (min)"
+              },
+              "min": 1,
+              "default": 5,
+              "filter": false,
+              "sort": false
+            }
+          ]
+        }
+      }
     }
   }
 }

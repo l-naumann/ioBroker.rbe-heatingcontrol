@@ -15,6 +15,7 @@ This adapter connects to the cmi.ta.co.at portal to automatically read heating c
 - **Password**: Your login password for the CMI portal
 - **Poll Interval**: How often to poll for new data in milliseconds (default and minimum: 60000)
 - **Poll night setback**: Reads `sensors.nachtabsenkung` from `1.cgi` (causes one additional request per poll interval)
+- **Logging profiles**: Logging profiles of the CMI portal (profile name, creator, refresh interval in minutes). Each profile causes one request per refresh interval.
 
 ## Features
 
@@ -33,6 +34,7 @@ The adapter creates several state categories:
 - `sensors.nachtabsenkung` - `true` while the night setback is active (optional, from `1.cgi`)
 - `controls.traum_soll` - Room temperature setpoint (writable, from `4.cgi`)
 - `controls.traum_absenk_soll` - Room temperature setpoint during night setback (writable, from `4.cgi`)
+- `logging.<profile>.*` - Latest value of each variable of a logging profile, with the time of the measurement as timestamp
 
 ## Changelog
 
