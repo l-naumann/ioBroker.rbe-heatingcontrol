@@ -3,6 +3,7 @@
 const utils = require('@iobroker/adapter-core');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const dgram = require('dgram');
 
 const PORTAL_URL = 'https://cmi.ta.co.at/portal';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
@@ -19,6 +20,38 @@ const CONTROLS = [
 
 // Logging profiles: always cover at least this much more than the refresh interval
 const LOG_OVERLAP = 5 * 60000;
+
+// CoE V2 (CAN over Ethernet): UDP packets to the CMI in the local network
+const COE_PORT = 5442;
+const COE_MAX_PAYLOADS = 31;
+const COE_DIGITAL_UNIT = 43; // Ein/Aus
+// Unit ids of analog values; the value is sent as integer with this many implied decimal places
+const COE_UNITS = {
+    0: { unit: '', decimals: 0 },
+    58: { unit: '', decimals: 1 },
+    1: { unit: '°C', decimals: 1 },
+    7: { unit: 'K', decimals: 1 },
+    8: { unit: '%', decimals: 1 },
+    2: { unit: 'W/m²', decimals: 0 },
+    3: { unit: 'l/h', decimals: 0 },
+    22: { unit: 'l/min', decimals: 0 },
+    38: { unit: 'm³/h', decimals: 0 },
+    19: { unit: 'l', decimals: 0 },
+    69: { unit: 'W', decimals: 0 },
+    10: { unit: 'kW', decimals: 2 },
+    11: { unit: 'kWh', decimals: 1 },
+    12: { unit: 'MWh', decimals: 0 },
+    13: { unit: 'V', decimals: 2 },
+    14: { unit: 'mA', decimals: 1 },
+    63: { unit: 'A', decimals: 1 },
+    23: { unit: 'bar', decimals: 2 },
+    21: { unit: 'Hz', decimals: 2 },
+    4: { unit: 's', decimals: 0 },
+    5: { unit: 'min', decimals: 0 },
+    15: { unit: 'h', decimals: 0 },
+    16: { unit: 'd', decimals: 0 },
+    17: { unit: 'Imp', decimals: 0 },
+};
 
 // Expired sessions show up as redirect to the login page or as 401/403
 const SESSION_ERROR_STATUS = [301, 302, 303, 401, 403];
@@ -37,9 +70,18 @@ class RbeHeatingControl extends utils.Adapter {
         this.knownObjects = new Set();
         this.profileTimers = new Map(); // profile folder -> timeout
         this.lastLogTs = new Map(); // state id -> timestamp of last written log value
+        this.canValues = new Map(); // CAN input state id -> last sent value
     }
 
     async onReady() {
+        const pollSetback = this.config.pollSetback !== false;
+        this.profiles = this.validProfiles(this.config.loggingProfiles || []);
+        this.canInputs = this.validCanInputs(this.config.canInputs || []);
+
+        await this.cleanupObjects(pollSetback);
+        // CoE only needs the local network, so it also works without portal login
+        await this.setupCan();
+
         const { cmiName, email, password } = this.config;
         if (!cmiName || !email || !password) {
             this.log.error('CMI name, email and password are required in adapter configuration');
@@ -48,7 +90,6 @@ class RbeHeatingControl extends utils.Adapter {
 
         this.baseUrl = `https://${cmiName}.cmi.ta.co.at/webi`;
         this.pollInterval = Math.max(MIN_POLL_INTERVAL, Number(this.config.pollInterval) || 0);
-        const pollSetback = this.config.pollSetback !== false;
 
         // Schematic pages of the CMI web interface:
         // 'controls' = setpoints, 'setback' = night setback indicator, 'sensors' = label/value pairs
@@ -59,9 +100,6 @@ class RbeHeatingControl extends utils.Adapter {
             { file: 13, type: 'sensors' },
         ];
 
-        this.profiles = this.validProfiles(this.config.loggingProfiles || []);
-
-        await this.cleanupObjects(pollSetback);
         await this.setStateAsync('info.connection', false, true);
         this.subscribeStates('controls.*');
         await this.login();
@@ -85,8 +123,32 @@ class RbeHeatingControl extends utils.Adapter {
         return result;
     }
 
-    // Remove controls of older versions (controls.posX, controls.posX_changeAddr), the disabled setback state
-    // and folders of deleted logging profiles
+    validCanInputs(inputs) {
+        const result = [];
+        for (const input of inputs) {
+            const name = (input.name || '').trim();
+            const node = Number(input.node);
+            const output = Number(input.output);
+            const digital = input.type === 'digital';
+            const unit = Number(input.unit) || 0;
+            const id = `can.${name.replace(this.FORBIDDEN_CHARS, '_').replace(/[.\s]/g, '_')}`;
+            if (!name) {
+                this.log.warn('CAN input without name ignored');
+            } else if (!Number.isInteger(node) || node < 1 || node > 62 || !Number.isInteger(output) || output < 1 || output > 64) {
+                this.log.warn(`CAN input "${name}" ignored: node must be 1-62, output 1-64`);
+            } else if (!digital && !COE_UNITS[unit]) {
+                this.log.warn(`CAN input "${name}" ignored: unknown unit ${unit}`);
+            } else if (result.some(i => i.id === id)) {
+                this.log.warn(`CAN input "${name}" configured twice, ignoring the second one`);
+            } else {
+                result.push({ name, id, node, output, digital, unit });
+            }
+        }
+        return result;
+    }
+
+    // Remove controls of older versions (controls.posX, controls.posX_changeAddr), the disabled setback state,
+    // folders of deleted logging profiles and deleted CAN inputs
     async cleanupObjects(pollSetback) {
         const keep = new Set(CONTROLS.map(control => `${this.namespace}.controls.${control.id}`));
         const obsolete = id => id.startsWith(`${this.namespace}.controls.`) && !keep.has(id);
@@ -114,6 +176,95 @@ class RbeHeatingControl extends utils.Adapter {
         for (const folder of deletedProfiles) {
             this.log.info(`Deleting states of removed logging profile ${folder}`);
             await this.delObjectAsync(`logging.${folder}`, { recursive: true });
+        }
+
+        const canIds = new Set(this.canInputs.map(input => `${this.namespace}.${input.id}`));
+        for (const id of Object.keys(objects).filter(id => id.startsWith(`${this.namespace}.can.`) && !canIds.has(id))) {
+            this.log.info(`Deleting removed CAN input ${id}`);
+            await this.delForeignObjectAsync(id);
+        }
+    }
+
+    async setupCan() {
+        if (!this.canInputs.length) {
+            return;
+        }
+        if (!this.config.cmiIp) {
+            this.log.error('CAN inputs are configured, but the local IP of the CMI is missing');
+            return;
+        }
+
+        this.coeSocket = dgram.createSocket('udp4');
+        this.coeSocket.on('error', err => this.log.error(`CoE socket error: ${err.message}`));
+
+        await this.setObjectNotExistsAsync('can', { type: 'folder', common: { name: 'CAN-Eingänge (CoE)' }, native: {} });
+        for (const input of this.canInputs) {
+            const common = input.digital
+                ? { name: input.name, type: 'boolean', role: 'switch', read: true, write: true }
+                : { name: input.name, type: 'number', role: 'level', unit: COE_UNITS[input.unit].unit, read: true, write: true };
+            await this.ensureObject(input.id, common);
+
+            const state = await this.getStateAsync(input.id);
+            if (state && state.val !== null && state.val !== undefined) {
+                this.canValues.set(input.id, state.val);
+            }
+        }
+        this.subscribeStates('can.*');
+
+        // The CMI treats CAN inputs as failed after their timeout, so the last values are sent
+        // again after a restart and then regularly
+        await this.resendCan();
+        const resendInterval = Number(this.config.coeResendInterval);
+        if (resendInterval > 0) {
+            this.coeTimer = setInterval(() => this.resendCan(), resendInterval * 60000);
+        }
+    }
+
+    async resendCan() {
+        const entries = this.canInputs
+            .filter(input => this.canValues.has(input.id))
+            .map(input => [input, this.canValues.get(input.id)]);
+        try {
+            await this.sendCan(entries);
+        } catch (err) {
+            this.log.error(`Error sending CAN values: ${err.message}`);
+        }
+    }
+
+    async sendCan(entries) {
+        const payloads = entries.map(([input, value]) => coePayload(input, value));
+        for (let i = 0; i < payloads.length; i += COE_MAX_PAYLOADS) {
+            const packet = coePacket(payloads.slice(i, i + COE_MAX_PAYLOADS));
+            await new Promise((resolve, reject) => {
+                this.coeSocket.send(packet, COE_PORT, this.config.cmiIp, err => (err ? reject(err) : resolve()));
+            });
+        }
+    }
+
+    async onCanChange(id, val) {
+        const input = this.canInputs.find(i => i.id === id);
+        if (!input || !this.coeSocket) {
+            return;
+        }
+
+        let value = input.digital ? val === true || val === 1 || val === 'true' : Number(val);
+        if (!input.digital) {
+            if (!Number.isFinite(value)) {
+                this.log.warn(`Invalid value for ${id}: ${val}`);
+                return;
+            }
+            // Only as many decimal places as the unit can transport, so the state shows what the CMI gets
+            const factor = 10 ** COE_UNITS[input.unit].decimals;
+            value = Math.round(value * factor) / factor;
+        }
+
+        try {
+            await this.sendCan([[input, value]]);
+            this.canValues.set(id, value);
+            this.log.debug(`Sent ${id} = ${value} via CoE`);
+            await this.setStateAsync(id, value, true);
+        } catch (err) {
+            this.log.error(`Error sending ${id} = ${value} via CoE: ${err.message}`);
         }
     }
 
@@ -374,6 +525,11 @@ class RbeHeatingControl extends utils.Adapter {
     }
 
     async writeState(id, common, val, ts) {
+        await this.ensureObject(id, common);
+        await this.setStateAsync(id, ts ? { val, ack: true, ts } : { val, ack: true });
+    }
+
+    async ensureObject(id, common) {
         // Create each object once per run; fix type/role/unit of objects created by older versions
         if (!this.knownObjects.has(id)) {
             const obj = await this.getObjectAsync(id);
@@ -384,12 +540,16 @@ class RbeHeatingControl extends utils.Adapter {
             }
             this.knownObjects.add(id);
         }
-        await this.setStateAsync(id, ts ? { val, ack: true, ts } : { val, ack: true });
     }
 
     async onStateChange(id, state) {
         if (!state || state.ack || state.val === null || state.val === undefined) {
             return;
+        }
+
+        const relativeId = id.slice(this.namespace.length + 1);
+        if (relativeId.startsWith('can.')) {
+            return this.onCanChange(relativeId, state.val);
         }
 
         const controlId = id.split('.').pop();
@@ -413,8 +573,33 @@ class RbeHeatingControl extends utils.Adapter {
     onUnload(callback) {
         clearTimeout(this.timer);
         this.profileTimers.forEach(timer => clearTimeout(timer));
+        clearInterval(this.coeTimer);
+        this.coeSocket?.close();
         callback();
     }
+}
+
+// CoE V2 payload: node, output index (0-based), format (0 = digital, 1 = analog), unit id, value as int32 LE
+function coePayload(input, value) {
+    const payload = Buffer.alloc(8);
+    payload[0] = input.node;
+    payload[1] = input.output - 1;
+    if (input.digital) {
+        payload[2] = 0;
+        payload[3] = COE_DIGITAL_UNIT;
+        payload[4] = value ? 1 : 0;
+    } else {
+        payload[2] = 1;
+        payload[3] = input.unit;
+        payload.writeInt32LE(Math.round(value * 10 ** COE_UNITS[input.unit].decimals), 4);
+    }
+    return payload;
+}
+
+// CoE V2 header: version 2.0, total length in bytes, number of payloads
+function coePacket(payloads) {
+    const header = Buffer.from([2, 0, 4 + 8 * payloads.length, payloads.length]);
+    return Buffer.concat([header, ...payloads]);
 }
 
 function isSessionError(err) {

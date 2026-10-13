@@ -104,6 +104,241 @@
           ]
         }
       }
+    },
+    "can": {
+      "type": "panel",
+      "label": {
+        "en": "CAN inputs (CoE)",
+        "de": "CAN-Eingänge (CoE)"
+      },
+      "items": {
+        "cmiIp": {
+          "type": "text",
+          "xs": 12,
+          "sm": 6,
+          "md": 4,
+          "label": {
+            "en": "Local IP of the CMI",
+            "de": "Lokale IP des CMI"
+          },
+          "help": {
+            "en": "CoE packets are sent to this address (UDP port 5442). In the CMI, CoE version 2 must be selected.",
+            "de": "An diese Adresse werden die CoE-Pakete gesendet (UDP-Port 5442). Im CMI muss CoE-Version 2 eingestellt sein."
+          },
+          "placeholder": "192.168.1.50"
+        },
+        "coeResendInterval": {
+          "type": "number",
+          "xs": 12,
+          "sm": 6,
+          "md": 4,
+          "min": 0,
+          "max": 60,
+          "label": {
+            "en": "Resend interval (min)",
+            "de": "Wiederholintervall (min)"
+          },
+          "help": {
+            "en": "Values are sent again regularly so that the CAN inputs don't run into their timeout. 0 = only on change.",
+            "de": "Die Werte werden regelmäßig erneut gesendet, damit die CAN-Eingänge nicht in ihren Timeout laufen. 0 = nur bei Änderung."
+          }
+        },
+        "canInputs": {
+          "type": "table",
+          "xs": 12,
+          "sm": 12,
+          "md": 12,
+          "lg": 12,
+          "xl": 12,
+          "label": {
+            "en": "CAN inputs",
+            "de": "CAN-Eingänge"
+          },
+          "help": {
+            "en": "Node and output as set in the CAN input of the controller. Each input appears as writable state can.<name>; setting it sends the value via CoE. The unit only applies to analog inputs.",
+            "de": "Knoten- und Ausgangsnummer wie im CAN-Eingang des Reglers eingestellt. Jeder Eingang erscheint als beschreibbarer State can.<Name>; beim Setzen wird der Wert per CoE gesendet. Die Einheit gilt nur für analoge Eingänge."
+          },
+          "items": [
+            {
+              "type": "text",
+              "attr": "name",
+              "width": "25%",
+              "title": {
+                "en": "Name",
+                "de": "Name"
+              },
+              "filter": false,
+              "sort": false
+            },
+            {
+              "type": "select",
+              "attr": "type",
+              "width": "15%",
+              "title": {
+                "en": "Type",
+                "de": "Typ"
+              },
+              "default": "analog",
+              "filter": false,
+              "sort": false,
+              "options": [
+                {
+                  "label": {
+                    "en": "analog",
+                    "de": "analog"
+                  },
+                  "value": "analog"
+                },
+                {
+                  "label": {
+                    "en": "digital",
+                    "de": "digital"
+                  },
+                  "value": "digital"
+                }
+              ]
+            },
+            {
+              "type": "number",
+              "attr": "node",
+              "width": "15%",
+              "title": {
+                "en": "Node",
+                "de": "Knotennummer"
+              },
+              "min": 1,
+              "max": 62,
+              "default": 42,
+              "filter": false,
+              "sort": false
+            },
+            {
+              "type": "number",
+              "attr": "output",
+              "width": "15%",
+              "title": {
+                "en": "Output",
+                "de": "Ausgangsnummer"
+              },
+              "min": 1,
+              "max": 64,
+              "default": 1,
+              "filter": false,
+              "sort": false
+            },
+            {
+              "type": "select",
+              "attr": "unit",
+              "width": "30%",
+              "title": {
+                "en": "Unit",
+                "de": "Einheit"
+              },
+              "default": 1,
+              "filter": false,
+              "sort": false,
+              "options": [
+                {
+                  "label": "dimensionslos",
+                  "value": 0
+                },
+                {
+                  "label": "dimensionslos (0,1)",
+                  "value": 58
+                },
+                {
+                  "label": "°C",
+                  "value": 1
+                },
+                {
+                  "label": "K",
+                  "value": 7
+                },
+                {
+                  "label": "%",
+                  "value": 8
+                },
+                {
+                  "label": "W/m²",
+                  "value": 2
+                },
+                {
+                  "label": "l/h",
+                  "value": 3
+                },
+                {
+                  "label": "l/min",
+                  "value": 22
+                },
+                {
+                  "label": "m³/h",
+                  "value": 38
+                },
+                {
+                  "label": "l",
+                  "value": 19
+                },
+                {
+                  "label": "W",
+                  "value": 69
+                },
+                {
+                  "label": "kW",
+                  "value": 10
+                },
+                {
+                  "label": "kWh",
+                  "value": 11
+                },
+                {
+                  "label": "MWh",
+                  "value": 12
+                },
+                {
+                  "label": "V",
+                  "value": 13
+                },
+                {
+                  "label": "mA",
+                  "value": 14
+                },
+                {
+                  "label": "A",
+                  "value": 63
+                },
+                {
+                  "label": "bar",
+                  "value": 23
+                },
+                {
+                  "label": "Hz",
+                  "value": 21
+                },
+                {
+                  "label": "s",
+                  "value": 4
+                },
+                {
+                  "label": "min",
+                  "value": 5
+                },
+                {
+                  "label": "h",
+                  "value": 15
+                },
+                {
+                  "label": "Tage",
+                  "value": 16
+                },
+                {
+                  "label": "Impulse",
+                  "value": 17
+                }
+              ]
+            }
+          ]
+        }
+      }
     }
   }
 }

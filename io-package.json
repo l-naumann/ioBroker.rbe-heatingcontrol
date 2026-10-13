@@ -54,7 +54,10 @@
     "password": "",
     "pollInterval": 60000,
     "pollSetback": true,
-    "loggingProfiles": []
+    "loggingProfiles": [],
+    "cmiIp": "",
+    "coeResendInterval": 5,
+    "canInputs": []
   },
   "objects": [],
   "instanceObjects": [
